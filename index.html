@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SyncShare - Real-time Mirror</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 0; overflow-x: hidden; background: #121212; color: white; }
+        #controls { position: fixed; top: 10px; left: 10px; z-index: 100; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 8px; }
+        #viewer-container { width: 100%; display: flex; flex-direction: column; align-items: center; }
+        canvas { max-width: 100%; margin-bottom: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        .btn { cursor: pointer; padding: 8px 12px; border: none; border-radius: 4px; background: #3498db; color: white; }
+        input { padding: 8px; border-radius: 4px; border: 1px solid #444; background: #222; color: white; }
+        #status { font-size: 12px; margin-top: 10px; color: #aaa; }
+    </style>
+</head>
+<body>
+
+<div id="controls">
+    <h3>SyncShare</h3>
+    <div id="setup-area">
+        <p>Your ID: <strong id="my-id">...</strong></p>
+        <input type="text" id="join-id" placeholder="Enter Friend's ID">
+        <button class="btn" onclick="connectToPeer()">Connect</button>
+        <hr>
+        <input type="file" id="file-input" accept="application/pdf,image/*">
+    </div>
+    <div id="status">Disconnected</div>
+</div>
+
+<div id="viewer-container">
+    <div id="drop-zone">
+        <h2 style="margin-top:200px">Waiting for file or connection...</h2>
+    </div>
+</div>
+
+<script>
+    let peer = new Peer();
+    let conn;
+    const viewer = document.getElementById('viewer-container');
+    const status = document.getElementById('status');
+
+    // 1. Initialize Peer
+    peer.on('open', (id) => {
+        document.getElementById('my-id').innerText = id;
+    });
+
+    // 2. Handle Incoming Connections
+    peer.on('connection', (c) => {
+        conn = c;
+        setupConnection();
+        status.innerText = "Connected to Client";
+    });
+
+    // 3. Connect to someone else
+    function connectToPeer() {
+        const remoteId = document.getElementById('join-id').value;
+        conn = peer.connect(remoteId);
+        setupConnection();
+        status.innerText = "Connecting...";
+    }
+
+    function setupConnection() {
+        conn.on('open', () => {
+            status.innerText = "Sync Active";
+            
+            // Listen for data (scroll or files)
+            conn.on('data', (data) => {
+                if (data.type === 'scroll') {
+                    window.scrollTo(0, data.y);
+                } else if (data.type === 'file') {
+                    renderFile(data.file, data.fileType);
+                }
+            });
+        });
+    }
+
+    // 4. File Handling
+    document.getElementById('file-input').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+        reader.onload = () => {
+            const fileData = reader.result;
+            renderFile(fileData, file.type);
+            if (conn) conn.send({ type: 'file', file: fileData, fileType: file.type });
+        };
+        reader.readAsArrayBuffer(file);
+    });
+
+    function renderFile(data, type) {
+        viewer.innerHTML = ''; // Clear previous
+        if (type === 'application/pdf') {
+            const loadingTask = pdfjsLib.getDocument({data: data});
+            loadingTask.promise.then(pdf => {
+                for(let i=1; i<=pdf.numPages; i++) {
+                    pdf.getPage(i).then(page => {
+                        const canvas = document.createElement('canvas');
+                        viewer.appendChild(canvas);
+                        const viewport = page.getViewport({scale: 1.5});
+                        canvas.height = viewport.height;
+                        canvas.width = viewport.width;
+                        page.render({canvasContext: canvas.getContext('2d'), viewport: viewport});
+                    });
+                }
+            });
+        } else {
+            const blob = new Blob([data], {type: type});
+            const img = document.createElement('img');
+            img.src = URL.createObjectURL(blob);
+            img.style.width = "100%";
+            viewer.appendChild(img);
+        }
+    }
+
+    // 5. Sync Scroll
+    window.addEventListener('scroll', () => {
+        if (conn && conn.open) {
+            conn.send({ type: 'scroll', y: window.scrollY });
+        }
+    });
+</script>
+
+</body>
+</html>
